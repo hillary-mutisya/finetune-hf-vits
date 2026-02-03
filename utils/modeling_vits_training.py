@@ -1541,7 +1541,8 @@ class VitsTextEncoder(nn.Module):
     def __init__(self, config: VitsConfig):
         super().__init__()
         self.config = config
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, config.pad_token_id)
+        pad_token_id = getattr(config, 'pad_token_id', None)
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, pad_token_id)
         self.encoder = VitsEncoder(config)
         self.project = nn.Conv1d(config.hidden_size, config.flow_size * 2, kernel_size=1)
 
@@ -1599,6 +1600,12 @@ class VitsPreTrainedModel(PreTrainedModel):
     base_model_prefix = "vits"
     main_input_name = "input_ids"
     supports_gradient_checkpointing = True
+    _tied_weights_keys = []
+    
+    def __init__(self, config):
+        super().__init__(config)
+        # Initialize all_tied_weights_keys for transformers 5.0 compatibility
+        self.all_tied_weights_keys = {}
 
     def _init_weights(self, module):
         """Initialize the weights"""

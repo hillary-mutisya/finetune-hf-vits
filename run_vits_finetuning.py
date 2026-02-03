@@ -33,7 +33,14 @@ from transformers.feature_extraction_utils import BatchFeature
 from transformers.optimization import get_scheduler
 from transformers.trainer_pt_utils import LengthGroupedSampler
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
-from transformers.utils import send_example_telemetry
+
+# send_example_telemetry was removed in newer transformers versions
+try:
+    from transformers.utils import send_example_telemetry
+except ImportError:
+    def send_example_telemetry(*args, **kwargs):
+        pass
+
 from utils import plot_alignment_to_numpy, plot_spectrogram_to_numpy, VitsDiscriminator, VitsModelForPreTraining, VitsFeatureExtractor, slice_segments, VitsConfig, uromanize
 
 
@@ -568,12 +575,14 @@ def main():
 
     # 3. Detecting last checkpoint and eventually continue from last checkpoint
     last_checkpoint = None
-    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+    overwrite_output_dir = getattr(training_args, 'overwrite_output_dir', False)
+    if os.path.isdir(training_args.output_dir) and training_args.do_train and not overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(training_args.output_dir)
         if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
-            raise ValueError(
+            # Directory exists but no checkpoint - continue anyway
+            logger.warning(
                 f"Output directory ({training_args.output_dir}) already exists and is not empty. "
-                "Use --overwrite_output_dir to overcome."
+                "Continuing anyway."
             )
         elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
             logger.info(
@@ -868,7 +877,9 @@ def main():
     # inspired from https://github.com/huggingface/diffusers/blob/main/examples/text_to_image/train_text_to_image.py
     # and https://github.com/huggingface/community-events/blob/main/huggan/pytorch/cyclegan/train.py
 
-    logging_dir = os.path.join(training_args.output_dir, training_args.logging_dir)
+    # Handle None logging_dir (can happen with newer transformers versions)
+    log_dir = getattr(training_args, 'logging_dir', None) or 'logs'
+    logging_dir = os.path.join(training_args.output_dir, log_dir)
     accelerator_project_config = ProjectConfiguration(project_dir=training_args.output_dir, logging_dir=logging_dir)
 
     accelerator = Accelerator(
