@@ -170,3 +170,11 @@ cython_debug/
 tmp/*
 outputs/*
 generated_samples/*
+outlier_samples/*
+outlier_samples_test/*
+speaker_analysis_full/
+denoise_deepfilter/
+denoise_full_dataset/
+denoise_full_dataset/enhanced_audio/sample_00000.wav
+resemble_enhanced_dataset/
+audio_samples/
