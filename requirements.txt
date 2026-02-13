@@ -1,7 +1,21 @@
+# Production VITS Training - Pinned Dependencies
+# Validated with V5 training run (February 2026)
+#
+# CRITICAL: transformers must be 4.35.1
+# Version 5.0+ has a bug that destroys pre-trained weights during from_pretrained()
+#
+# Install PyTorch separately first:
+#   pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+
 transformers==4.35.1
 datasets[audio]==2.14.7
 accelerate==0.24.1
+numpy<2
+scipy>=1.10.0
+safetensors>=0.7.0
+tokenizers>=0.14.0
+huggingface-hub>=0.17.0
+tensorboard
 matplotlib
 wandb
-tensorboard
 Cython
