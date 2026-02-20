@@ -177,4 +177,4 @@ denoise_deepfilter/
 denoise_full_dataset/
 denoise_full_dataset/enhanced_audio/sample_00000.wav
 resemble_enhanced_dataset/
-audio_samples/
+*.wav

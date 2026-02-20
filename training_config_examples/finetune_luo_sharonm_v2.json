@@ -1,0 +1,57 @@
+{
+    "project_name": "vits_luo_26_05_f_v2",
+    "push_to_hub": true,
+    "save_strategy": "steps",
+    "save_steps": 500,
+    "save_total_limit": 15,
+    "hub_model_id": "mutisya/vits_luo_26_05_f_v2",
+    "hub_private_repo": true,
+    "report_to": ["tensorboard"],
+    "output_dir": "./outputs/vits_finetuned_luo_sharonm_v2",
+
+    "dataset_name": "mutisya/tts-speakers-7lang-15k-25-49-v2",
+    "dataset_config_name": "luo_Latn",
+    "audio_column_name": "audio",
+    "text_column_name": "transcription",
+    "override_speaker_embeddings": true,
+    "train_split_name": "sharonm",
+    "eval_split_name": "sharonm",
+    "max_eval_samples": 50,
+
+    "do_lower_case": true,
+    "full_generation_sample_text": "Chike ker ilando kod ker owuon. Nyasaye nochiwo nyathi moro achiel ma ne en gi paro maber.",
+
+    "max_duration_in_seconds": 20,
+    "min_duration_in_seconds": 1.0,
+    "max_tokens_length": 500,
+
+    "model_name_or_path": "mutisya/vits_luo_drL_24_5-v24_27_1_pre",
+    "preprocessing_num_workers": 4,
+
+    "do_train": true,
+    "num_train_epochs": 50,
+    "gradient_accumulation_steps": 1,
+    "gradient_checkpointing": false,
+    "per_device_train_batch_size": 16,
+    "learning_rate": 2e-5,
+    "adam_beta1": 0.8,
+    "adam_beta2": 0.99,
+    "warmup_ratio": 0.01,
+    "group_by_length": false,
+
+    "do_eval": true,
+    "eval_steps": 50,
+    "per_device_eval_batch_size": 16,
+    "do_step_schedule_per_epoch": true,
+
+    "weight_duration": 1.0,
+    "weight_kl": 1.5,
+    "weight_mel": 35.0,
+    "weight_disc": 3.0,
+    "weight_gen": 1.0,
+    "weight_fmaps": 1.0,
+
+    "fp16": true,
+    "seed": 456,
+    "logging_steps": 10
+}

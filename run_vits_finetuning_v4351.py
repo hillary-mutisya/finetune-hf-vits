@@ -33,22 +33,7 @@ from transformers.feature_extraction_utils import BatchFeature
 from transformers.optimization import get_scheduler
 from transformers.trainer_pt_utils import LengthGroupedSampler
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
-
-# send_example_telemetry was removed in newer transformers versions
-try:
-    from transformers.utils import send_example_telemetry
-except ImportError:
-    def send_example_telemetry(*args, **kwargs):
-        pass
-
-# UTMOS for perceptual quality scoring
-try:
-    from utmos import Score as UTMOSScore
-    UTMOS_AVAILABLE = True
-except ImportError:
-    UTMOS_AVAILABLE = False
-    logger.warning("UTMOS not available. Install with: pip install utmos")
-
+from transformers.utils import send_example_telemetry
 from utils import plot_alignment_to_numpy, plot_spectrogram_to_numpy, VitsDiscriminator, VitsModelForPreTraining, VitsFeatureExtractor, slice_segments, VitsConfig, uromanize
 
 
@@ -133,43 +118,6 @@ class ModelArguments:
         metadata={
             "help": (
                 "If `True`, it will resize the token embeddings based on the vocabulary size of the tokenizer. In other words, use this when you use a different tokenizer than the one that was used during pretraining."
-            )
-        },
-    )
-
-    freeze_text_encoder: bool = field(
-        default=False,
-        metadata={
-            "help": (
-                "If `True`, freeze the text encoder during finetuning. This preserves the pretrained "
-                "phoneme representations and is recommended when finetuning on a new speaker."
-            )
-        },
-    )
-
-    freeze_duration_predictor: bool = field(
-        default=False,
-        metadata={
-            "help": (
-                "If `True`, freeze the duration predictor during finetuning."
-            )
-        },
-    )
-
-    freeze_posterior_encoder: bool = field(
-        default=False,
-        metadata={
-            "help": (
-                "If `True`, freeze the posterior encoder during finetuning."
-            )
-        },
-    )
-
-    freeze_flow: bool = field(
-        default=False,
-        metadata={
-            "help": (
-                "If `True`, freeze the flow module during finetuning."
             )
         },
     )
@@ -544,71 +492,6 @@ def log_on_trackers(
             logger.warn(f"audio logging not implemented for {tracker.name}")
 
 
-# Global UTMOS scorer (lazy loaded)
-_utmos_scorer = None
-
-def get_utmos_scorer():
-    """Lazy load UTMOS scorer to avoid loading at import time."""
-    global _utmos_scorer
-    if _utmos_scorer is None and UTMOS_AVAILABLE:
-        try:
-            _utmos_scorer = UTMOSScore()
-            logger.info("UTMOS scorer loaded successfully")
-        except Exception as e:
-            logger.warning(f"Failed to load UTMOS scorer: {e}")
-    return _utmos_scorer
-
-
-def compute_utmos_score(waveforms, sampling_rate=16000, max_samples=8):
-    """
-    Compute UTMOS MOS scores for a batch of waveforms.
-    
-    Args:
-        waveforms: List of numpy arrays or tensor of shape (batch, samples)
-        sampling_rate: Audio sampling rate
-        max_samples: Maximum number of samples to score (for speed)
-    
-    Returns:
-        mean_score: Average UTMOS score (1-5 scale)
-        scores: List of individual scores
-    """
-    scorer = get_utmos_scorer()
-    if scorer is None:
-        return None, []
-    
-    scores = []
-    # Convert to list of numpy arrays if tensor
-    if isinstance(waveforms, torch.Tensor):
-        waveforms = [w.cpu().numpy() for w in waveforms]
-    elif isinstance(waveforms, np.ndarray) and waveforms.ndim == 2:
-        waveforms = [w for w in waveforms]
-    
-    # Score up to max_samples
-    for wav in waveforms[:max_samples]:
-        try:
-            if isinstance(wav, torch.Tensor):
-                wav = wav.cpu().numpy()
-            # Ensure 1D
-            if wav.ndim > 1:
-                wav = wav.squeeze()
-            # Save to temp file for UTMOS (it expects file path)
-            import tempfile
-            import torchaudio
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
-                temp_path = f.name
-            torchaudio.save(temp_path, torch.tensor(wav).unsqueeze(0), sampling_rate)
-            score = scorer.calculate_wav_file(temp_path)
-            scores.append(float(score))
-            os.unlink(temp_path)
-        except Exception as e:
-            logger.debug(f"UTMOS scoring failed for sample: {e}")
-            continue
-    
-    if scores:
-        return np.mean(scores), scores
-    return None, []
-
-
 def compute_val_metrics_and_losses(
     val_losses,
     accelerator,
@@ -617,8 +500,6 @@ def compute_val_metrics_and_losses(
     mel_scaled_target,
     batch_size,
     compute_clap_similarity=False,
-    compute_utmos=True,
-    sampling_rate=16000,
 ):
     loss_mel = torch.nn.functional.l1_loss(mel_scaled_target, mel_scaled_generation)
     loss_kl = kl_loss(
@@ -636,16 +517,6 @@ def compute_val_metrics_and_losses(
 
     for key, loss in zip(["val_loss_mel", "val_loss_kl", "val_loss_mel_kl"], losses):
         val_losses[key] = val_losses.get(key, 0) + loss.item()
-
-    # Compute UTMOS perceptual quality score
-    if compute_utmos and UTMOS_AVAILABLE and accelerator.is_main_process:
-        try:
-            waveforms = model_outputs.waveform.squeeze(1)  # (batch, samples)
-            utmos_mean, utmos_scores = compute_utmos_score(waveforms, sampling_rate, max_samples=4)
-            if utmos_mean is not None:
-                val_losses["val_utmos"] = val_losses.get("val_utmos", []) + utmos_scores
-        except Exception as e:
-            logger.debug(f"UTMOS computation failed: {e}")
 
     return val_losses
 
@@ -697,14 +568,12 @@ def main():
 
     # 3. Detecting last checkpoint and eventually continue from last checkpoint
     last_checkpoint = None
-    overwrite_output_dir = getattr(training_args, 'overwrite_output_dir', False)
-    if os.path.isdir(training_args.output_dir) and training_args.do_train and not overwrite_output_dir:
+    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(training_args.output_dir)
         if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
-            # Directory exists but no checkpoint - continue anyway
-            logger.warning(
+            raise ValueError(
                 f"Output directory ({training_args.output_dir}) already exists and is not empty. "
-                "Continuing anyway."
+                "Use --overwrite_output_dir to overcome."
             )
         elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
             logger.info(
@@ -931,34 +800,14 @@ def main():
     # 8. Load pretrained model,
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
-    #
-    # IMPORTANT: We use manual load_state_dict instead of from_pretrained() because
-    # transformers v5's from_pretrained() calls _init_weights() AFTER loading weights,
-    # which reinitializes nn.Linear, nn.Embedding, and nn.LayerNorm parameters,
-    # destroying the pretrained text_encoder weights. This was the root cause of the
-    # "freeze not working" bug in V3 training.
-    from safetensors.torch import load_file as _load_safetensors
-    from huggingface_hub import hf_hub_download as _hf_download
-
-    model = VitsModelForPreTraining(config)
-    _model_path = model_args.model_name_or_path
-    _sf_local = os.path.join(_model_path, 'model.safetensors') if os.path.isdir(_model_path) else None
-    if _sf_local and os.path.isfile(_sf_local):
-        _sd = _load_safetensors(_sf_local)
-    else:
-        _sf_path = _hf_download(
-            _model_path, 'model.safetensors',
-            cache_dir=model_args.cache_dir,
-            revision=model_args.model_revision,
-            token=model_args.token,
-        )
-        _sd = _load_safetensors(_sf_path)
-    _result = model.load_state_dict(_sd, strict=False)
-    if _result.missing_keys:
-        logger.warning(f"Missing keys when loading pretrained model: {_result.missing_keys}")
-    if _result.unexpected_keys:
-        logger.info(f"Unexpected keys when loading (can be ignored): {len(_result.unexpected_keys)} keys")
-    del _sd  # free memory
+    model = VitsModelForPreTraining.from_pretrained(
+        model_args.model_name_or_path,
+        config=config,
+        cache_dir=model_args.cache_dir,
+        revision=model_args.model_revision,
+        token=model_args.token,
+        trust_remote_code=model_args.trust_remote_code,
+    )
 
     
     with training_args.main_process_first(desc="apply_weight_norm"):
@@ -1019,9 +868,7 @@ def main():
     # inspired from https://github.com/huggingface/diffusers/blob/main/examples/text_to_image/train_text_to_image.py
     # and https://github.com/huggingface/community-events/blob/main/huggan/pytorch/cyclegan/train.py
 
-    # Handle None logging_dir (can happen with newer transformers versions)
-    log_dir = getattr(training_args, 'logging_dir', None) or 'logs'
-    logging_dir = os.path.join(training_args.output_dir, log_dir)
+    logging_dir = os.path.join(training_args.output_dir, training_args.logging_dir)
     accelerator_project_config = ProjectConfiguration(project_dir=training_args.output_dir, logging_dir=logging_dir)
 
     accelerator = Accelerator(
@@ -1111,40 +958,9 @@ def main():
             disc.apply_weight_norm()
     del model.discriminator
 
-    # Freeze specified modules
-    frozen_modules = []
-    if model_args.freeze_text_encoder:
-        for param in model.text_encoder.parameters():
-            param.requires_grad = False
-        frozen_modules.append("text_encoder")
-    if model_args.freeze_duration_predictor:
-        for param in model.duration_predictor.parameters():
-            param.requires_grad = False
-        frozen_modules.append("duration_predictor")
-    if model_args.freeze_posterior_encoder:
-        for param in model.posterior_encoder.parameters():
-            param.requires_grad = False
-        frozen_modules.append("posterior_encoder")
-    if model_args.freeze_flow:
-        for param in model.flow.parameters():
-            param.requires_grad = False
-        frozen_modules.append("flow")
-
-    # Log frozen/trainable parameter counts
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    frozen_params = total_params - trainable_params
-    logger.info(f"Total parameters: {total_params:,}")
-    logger.info(f"Trainable parameters: {trainable_params:,} ({100*trainable_params/total_params:.1f}%)")
-    logger.info(f"Frozen parameters: {frozen_params:,} ({100*frozen_params/total_params:.1f}%)")
-    if frozen_modules:
-        logger.info(f"Frozen modules: {', '.join(frozen_modules)}")
-    else:
-        logger.info("No modules frozen - all parameters are trainable")
-
     # init gen_optimizer, gen_lr_scheduler, disc_optimizer, dics_lr_scheduler
     gen_optimizer = torch.optim.AdamW(
-        [p for p in model.parameters() if p.requires_grad],
+        model.parameters(),
         training_args.learning_rate,
         betas=[training_args.adam_beta1, training_args.adam_beta2],
         eps=training_args.adam_epsilon,
@@ -1529,19 +1345,7 @@ def main():
                     ]
                     full_generation_waveform = full_generation.waveform.cpu().numpy()
 
-                    # Process UTMOS scores before logging
-                    log_losses = {}
-                    for key, value in val_losses.items():
-                        if key == "val_utmos" and isinstance(value, list) and value:
-                            log_losses["val_utmos_mean"] = np.mean(value)
-                            log_losses["val_utmos_std"] = np.std(value)
-                            log_losses["val_utmos_min"] = np.min(value)
-                            log_losses["val_utmos_max"] = np.max(value)
-                            logger.info(f"UTMOS Score: {np.mean(value):.3f} ± {np.std(value):.3f} (n={len(value)})")
-                        else:
-                            log_losses[key] = value
-                    
-                    accelerator.log(log_losses, step=global_step)
+                    accelerator.log(val_losses, step=global_step)
 
                     log_on_trackers(
                         accelerator.trackers,
@@ -1652,19 +1456,7 @@ def main():
                     sampling_rate,
                 )
 
-                # Process UTMOS scores before logging
-                log_losses = {}
-                for key, value in val_losses.items():
-                    if key == "val_utmos" and isinstance(value, list) and value:
-                        log_losses["val_utmos_mean"] = np.mean(value)
-                        log_losses["val_utmos_std"] = np.std(value)
-                        log_losses["val_utmos_min"] = np.min(value)
-                        log_losses["val_utmos_max"] = np.max(value)
-                        logger.info(f"Final UTMOS Score: {np.mean(value):.3f} ± {np.std(value):.3f} (n={len(value)})")
-                    else:
-                        log_losses[key] = value
-                
-                accelerator.log(log_losses, step=global_step)
+                accelerator.log(val_losses, step=global_step)
                 logger.info("Validation finished... ")
 
             accelerator.wait_for_everyone()

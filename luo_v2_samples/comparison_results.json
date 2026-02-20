@@ -1,0 +1,44 @@
+[
+  {
+    "model": "v2_50ep",
+    "model_id": "mutisya/vits_luo_26_05_f_v2",
+    "config": "optimized",
+    "noise_scale": 0.1,
+    "mean_noise_floor_db": -91.9
+  },
+  {
+    "model": "v2_50ep",
+    "model_id": "mutisya/vits_luo_26_05_f_v2",
+    "config": "default",
+    "noise_scale": 0.667,
+    "mean_noise_floor_db": -94.7
+  },
+  {
+    "model": "production",
+    "model_id": "mutisya/vits_luo_drL_24_5-v24_27_1_f",
+    "config": "optimized",
+    "noise_scale": 0.1,
+    "mean_noise_floor_db": -92.0
+  },
+  {
+    "model": "production",
+    "model_id": "mutisya/vits_luo_drL_24_5-v24_27_1_f",
+    "config": "default",
+    "noise_scale": 0.667,
+    "mean_noise_floor_db": -88.9
+  },
+  {
+    "model": "v1_200ep",
+    "model_id": "mutisya/vits_luo_26_05_f_v1",
+    "config": "optimized",
+    "noise_scale": 0.1,
+    "mean_noise_floor_db": -88.4
+  },
+  {
+    "model": "v1_200ep",
+    "model_id": "mutisya/vits_luo_26_05_f_v1",
+    "config": "default",
+    "noise_scale": 0.667,
+    "mean_noise_floor_db": -86.9
+  }
+]
